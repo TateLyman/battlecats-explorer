@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Battle Cats Explorer — BCEN 15.2.0</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.min.js"></script>
+</head>
+<body>
+<div id="root"><div class="loading">Summoning cats...</div></div>
+<script type="text/babel">
+const {useState,useEffect,useRef,useMemo,useCallback}=React;
+let DB=null;
+
+async function loadData(){
+  const b='./data/';
+  const [units,enemies,stages,meta]=await Promise.all([
+    fetch(b+'units.json').then(r=>r.json()),
+    fetch(b+'enemies.json').then(r=>r.json()),
+    fetch(b+'stages.json').then(r=>r.json()),
+    fetch(b+'meta.json').then(r=>r.json()),
+  ]);
+  const U=units.map(r=>({id:r[0],f:r[1],nm:r[2],hp:r[3],ak:r[4],rn:r[5],sp:r[6],co:r[7],cd:r[8],tb:r[9],ar:r[10],kb:r[11],tr:r[12],ab:r[13],ta:r[15],hc:r[16],ld:r[17],fs:r[18]}));
+  const E=enemies.map(r=>({id:r[0],nm:r[1],hp:r[2],ak:r[3],rn:r[4],sp:r[5],tb:r[6],kb:r[7],ar:r[8],tr:r[9],ab:r[10],ta:r[11],hc:r[12],bar:r[15],shd:r[16]}));
+  return{U,E,ST:stages,...meta};
+}
+
+const RN=["N","EX","R","SR","U","LR"];
+const RC=["#7a7590","#69f0ae","#448aff","#b388ff","#ff5722","#ff80ab"];
+const TC={Red:"#ff5252",Float:"#69f0ae",Black:"#448aff",Metal:"#ffc107",White:"#bbb",Angel:"#ff80ab",Alien:"#00e5ff",Zombie:"#78909c",Relic:"#ff9100",Aku:"#ff1744",Traitless:"#999",Baron:"#ffab91",Behemoth:"#a5d6a7",Sage:"#ce93d8",Witch:"#f48fb1",EVA:"#80d8ff"};
+const TM={R:"Red",F:"Float",B:"Black",M:"Metal",W:"White",A:"Angel",L:"Alien",Z:"Zombie",E:"Relic",K:"Aku",T:"Traitless"};
+
+function dps(u){return u.tb>0?((u.ta||u.ak)/u.tb).toFixed(1):"\u2014";}
+function dpsSec(u){return u.tb>0?((u.ta||u.ak)/u.tb*30).toFixed(0):"\u2014";}
+function RB({id}){const r=DB?.rarity?.[id];if(r==null||r<0)return null;return <span className="rar" style={{color:RC[r],border:"1px solid "+RC[r]+"40"}}>{RN[r]}</span>;}
+function TB({tr}){if(!tr)return null;return <>{tr.split("").map((c,i)=>{const n=TM[c];return n?<span key={i} style={{color:TC[n],fontSize:9,fontWeight:700,marginRight:3}}>{n}</span>:null;})}</>;}
+function ET({tr}){if(!tr)return null;return <>{tr.split(",").map((t,i)=><span key={i} style={{color:TC[t]||"#ccc",fontSize:9,fontWeight:700,marginRight:3}}>{t}</span>)}</>;}
+
+const TABS=[
+  {id:"ask",icon:"\u{1F50D}",label:"Ask"},
+  {id:"units",icon:"\u{1F4E6}",label:"Units"},
+  {id:"enemies",icon:"\u{1F47E}",label:"Enemies"},
+  {id:"stages",icon:"\u{1F5FA}",label:"Stages"},
+  {id:"rec",icon:"\u{1F3AF}",label:"Lineup"},
+  {id:"compare",icon:"\u2696\uFE0F",label:"Compare"},
+  {id:"calc",icon:"\u{1F522}",label:"Calc"},
+  {id:"rank",icon:"\u{1F3C6}",label:"Rankings"},
+  {id:"dps",icon:"\u{1F4C8}",label:"DPS Chart"},
+  {id:"combos",icon:"\u{1F517}",label:"Combos"},
+  {id:"drops",icon:"\u{1F381}",label:"Drops"},
+  {id:"xp",icon:"\u{1F4B0}",label:"XP"},
+  {id:"fruit",icon:"\u{1F352}",label:"Catfruit"},
+  {id:"wave",icon:"\u{1F30A}",label:"Wave"},
+  {id:"tier",icon:"\u{1F451}",label:"Tiers"},
+  {id:"ehp",icon:"\u{1F480}",label:"EHP"},
+  {id:"tfpri",icon:"\u2B50",label:"TF Priority"},
+  {id:"seed",icon:"\u{1F331}",label:"Seed"},
+  {id:"mycats",icon:"\u{1F431}",label:"My Cats"},
+  {id:"ranks",icon:"\u{1F396}\uFE0F",label:"Ranks"},
+  {id:"info",icon:"\u{1F4CA}",label:"Info"},
+];
+
+// ============================================================
+// SMART QUERY ENGINE (free, instant, offline)
+// ============================================================
+function smartQuery(q) {
+  if(!DB)return"Database not loaded.";
+  const ql=q.toLowerCase().trim();
+  const results=[];
+  
+  // Pattern: "best anti-X" / "good against X"
+  const antiMatch=ql.match(/(?:best|good|top|strong)\s+(?:anti[- ]?|against\s+|vs\s+)(\w+)/);
+  if(antiMatch){
+    const trait=antiMatch[1].charAt(0).toUpperCase()+antiMatch[1].slice(1);
+    const trCode=Object.entries(TM).find(([k,v])=>v.toLowerCase()===trait.toLowerCase());
+    if(trCode){
+      const matches=DB.U.filter(u=>u.f===2&&u.tr.includes(trCode[0])&&u.ak>0)
+        .sort((a,b)=>(b.ta||b.ak)/Math.max(b.tb,1)-(a.ta||a.ak)/Math.max(a.tb,1));
+      return "**Best anti-"+trait+" units (True Form, by DPS):**\n\n"+
+        matches.slice(0,12).map((u,i)=>{
+          const r=DB.rarity[u.id];const rn=r>=0?RN[r]:"";
+          return (i+1)+". **"+u.nm+"** ["+rn+"] \u2014 DPS: "+dps(u)+"/f | ATK: "+(u.ta||u.ak).toLocaleString()+" | Range: "+u.rn+
+            (u.ab?"\n   Abilities: "+u.ab.split("|").slice(0,4).join(", "):"");
+        }).join("\n");
+    }
+  }
+  
+  // Pattern: "compare X vs Y"
+  const cmpMatch=ql.match(/compare\s+(.+?)\s+(?:vs|versus|and|to)\s+(.+)/);
+  if(cmpMatch){
+    const a=DB.U.find(u=>u.f===2&&u.nm.toLowerCase().includes(cmpMatch[1].trim()));
+    const b=DB.U.find(u=>u.f===2&&u.nm.toLowerCase().includes(cmpMatch[2].trim()));
+    if(a&&b){
+      return "**"+a.nm+" vs "+b.nm+"**\n\n"+
+        "| Stat | "+a.nm+" | "+b.nm+" | Winner |\n|---|---|---|---|\n"+
+        [["HP",a.hp,b.hp],["ATK",a.ta||a.ak,b.ta||b.ak],["DPS",dps(a),dps(b)],["Range",a.rn,b.rn],["Speed",a.sp,b.sp],["Cost",a.co,b.co]].map(([s,av,bv])=>{
+          const w=s==="Cost"?(av<bv?a.nm:bv<av?b.nm:"Tie"):(av>bv?a.nm:bv>av?b.nm:"Tie");
+          return "| "+s+" | "+av.toLocaleString()+" | "+bv.toLocaleString()+" | "+w+" |";
+        }).join("\n")+
+        "\n\n**"+a.nm+":** Traits: "+(a.tr||"None")+" | "+(a.ab?.split("|").slice(0,3).join(", ")||"No abilities")+
+        "\n**"+b.nm+":** Traits: "+(b.tr||"None")+" | "+(b.ab?.split("|").slice(0,3).join(", ")||"No abilities");
+    }
+  }
+  
+  // Pattern: "strongest/best ubers/units"
+  if(ql.match(/(?:strongest|best|top|highest dps)\s*(?:uber|unit|cat)/)){
+    const ubers=DB.U.filter(u=>u.f===2&&DB.rarity[u.id]===4&&u.ak>0)
+      .sort((a,b)=>(b.ta||b.ak)/Math.max(b.tb,1)-(a.ta||a.ak)/Math.max(a.tb,1));
+    return "**Top 15 Ubers by DPS (True Form):**\n\n"+
+      ubers.slice(0,15).map((u,i)=>(i+1)+". **"+u.nm+"** \u2014 DPS: "+dps(u)+"/f ("+dpsSec(u)+"/sec) | ATK: "+(u.ta||u.ak).toLocaleString()+" | Range: "+u.rn+
+        (DB.series[u.id]?" | "+DB.series[u.id]:"")+
+        (u.ab?"\n   "+u.ab.split("|").slice(0,3).join(", "):"")).join("\n");
+  }
+  
+  // Pattern: "best meatshield"
+  if(ql.match(/meatshield|meat shield|tank|cheap.*cat/)){
+    const meats=DB.U.filter(u=>u.f===2&&u.co<=200&&u.cd<=300&&u.hp>0)
+      .sort((a,b)=>(b.hp*b.kb)/(b.co||1)-(a.hp*a.kb)/(a.co||1));
+    return "**Best Meatshields (cheap, fast cooldown):**\n\n"+
+      meats.slice(0,10).map((u,i)=>(i+1)+". **"+u.nm+"** \u2014 HP: "+u.hp.toLocaleString()+" | KB: "+u.kb+" | EffHP: "+(u.hp*u.kb).toLocaleString()+" | Cost: "+u.co+" | CD: "+(u.cd/30).toFixed(1)+"s").join("\n");
+  }
+  
+  // Pattern: "stage X" / "enemies in X"
+  const stageMatch=ql.match(/(?:stage|enemies?\s+in|what.?s in)\s+(.+)/);
+  if(stageMatch){
+    const sq=stageMatch[1].trim();
+    // Try name lookup first
+    const nameMatch=DB.lookup.find(s=>s[0].toLowerCase().includes(sq));
+    const codeMatch=Object.keys(DB.ST).find(k=>k.toLowerCase().includes(sq));
+    const key=nameMatch?nameMatch[1]:codeMatch;
+    if(key&&DB.ST[key]){
+      const s=DB.ST[key];
+      const enemies=s.e.map(en=>{const enemy=DB.E.find(x=>x.id===en.i);return{...en,enemy};}).filter(x=>x.enemy);
+      return "**Stage: "+key+(nameMatch?" ("+nameMatch[0]+")":"")+"**\nBase HP: "+s.hp.toLocaleString()+"\n\n"+
+        enemies.map(({n,m,b,enemy})=>"- **"+n+"** ["+enemy.tr+"] "+(m!==100?m+"%":"")+
+          (b?" \u2605BOSS":"")+"\n  HP: "+Math.floor(enemy.hp*m/100).toLocaleString()+
+          " | ATK: "+Math.floor(enemy.ak*m/100).toLocaleString()+" | Range: "+enemy.rn).join("\n");
+    }
+  }
+  
+  // Pattern: unit lookup by name
+  const unitMatch=DB.U.find(u=>u.f===2&&u.nm.toLowerCase().includes(ql));
+  if(unitMatch){
+    const u=unitMatch;
+    const r=DB.rarity[u.id];
+    return "**"+u.nm+"** ["+(r>=0?RN[r]:"?")+"]"+(DB.series[u.id]?" \u2014 "+DB.series[u.id]:"")+"\n\n"+
+      "HP: "+u.hp.toLocaleString()+" | ATK: "+(u.ta||u.ak).toLocaleString()+(u.hc>1?" ("+u.hc+" hits)":"")+" | DPS: "+dps(u)+"/f ("+dpsSec(u)+"/sec)\n"+
+      "Range: "+u.rn+(u.ld?" "+u.ld:"")+" | Speed: "+u.sp+" | Cost: "+u.co+" | KB: "+u.kb+"\n"+
+      "AoE: "+(u.ar?"Yes":"No")+" | TBA: "+u.tb+"f ("+(u.tb/30).toFixed(2)+"s)\n\n"+
+      (u.tr?"**Targets:** "+u.tr.split("").map(c=>TM[c]).filter(Boolean).join(", ")+"\n":"")+
+      (u.ab?"**Abilities:** "+u.ab.split("|").join(", ")+"\n":"")+
+      "\n**At Lv30 + 300% treasures (~8.4x):**\nHP: "+Math.floor(u.hp*8.4).toLocaleString()+" | ATK: "+Math.floor((u.ta||u.ak)*8.4).toLocaleString()+" | DPS/sec: "+Math.floor(parseFloat(dpsSec(u))*8.4).toLocaleString();
+  }
+  
+  // Enemy lookup
+  const enemyMatch=DB.E.find(e=>e.hp>0&&e.nm.toLowerCase().includes(ql));
+  if(enemyMatch){
+    const e=enemyMatch;
+    return "**"+e.nm+"** (Enemy #"+e.id+")\n\nHP: "+e.hp.toLocaleString()+" | ATK: "+e.ak.toLocaleString()+" | Range: "+e.rn+"\n"+
+      "Speed: "+e.sp+" | TBA: "+e.tb+"f | KB: "+e.kb+"\n"+
+      "Traits: "+(e.tr||"None")+"\n"+(e.ab?"Abilities: "+e.ab.split("|").join(", "):"");
+  }
+  
+  // Help / fallback
+  return "**Battle Cats 15.2.0 Smart Query** \u2014 Try:\n\n"+
+    "\u2022 **\"best anti-angel\"** \u2014 top units against a trait\n"+
+    "\u2022 **\"compare Jizo vs Aphrodite\"** \u2014 side-by-side stats\n"+
+    "\u2022 **\"strongest ubers\"** \u2014 DPS leaderboard\n"+
+    "\u2022 **\"best meatshields\"** \u2014 tank rankings\n"+
+    "\u2022 **\"stage Earthshaker\"** \u2014 enemy lineup for any stage\n"+
+    "\u2022 **\"Jizo\"** or **\"Bun Bun\"** \u2014 look up any unit or enemy\n\n"+
+    "Powered by BCU-accurate data from the actual game files. No API needed \u2014 instant, offline, free.";
+}
+
+function AskTab(){
+  const [msgs,setMsgs]=useState([{r:"a",t:smartQuery("help")}]);
+  const [input,setInput]=useState("");
+  const ref=useRef(null);
+  const send=()=>{
+    if(!input.trim())return;
+    const q=input.trim();
+    setInput("");
+    const answer=smartQuery(q);
+    setMsgs(p=>[...p,{r:"u",t:q},{r:"a",t:answer}]);
+  };
+  useEffect(()=>{if(ref.current)ref.current.scrollTop=ref.current.scrollHeight;},[msgs]);
+  
+  function renderMd(text){
+    return text
+      .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
+      .replace(/\n/g,"<br>")
+      .replace(/\|(.+?)\|/g,function(m){return"<code>"+m+"</code>";});
+  }
+  
+  return <div className="chat-wrap">
+    <div ref={ref} className="chat-msgs">
+      {msgs.map((m,i)=><div key={i} className={"msg "+(m.r==="u"?"u":"a")} dangerouslySetInnerHTML={{__html:renderMd(m.t)}}/>)}
+    </div>
+    <div style={{display:"flex",gap:8,paddingTop:12,borderTop:"1px solid var(--bd)"}}>
+      <input className="inp" style={{flex:1}} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")send();}} placeholder='Try "best anti-angel" or "compare Jizo vs Aphrodite"...'/>
+      <button className="btn" onClick={send}>Ask</button>
+    </div>
+  </div>;
+}
+
+function UnitsTab(){
+  const [q,sQ]=useState(""),  [form,sF]=useState("best"), [sort,sS]=useState("id"), [rar,sR]=useState(-1), [trait,sT]=useState("");
+  const f=useMemo(()=>{
+    let r=DB.U.filter(u=>{
+      if(q&&!u.nm.toLowerCase().includes(q.toLowerCase())&&!String(u.id).includes(q))return false;
+      if(trait&&!u.tr.includes(trait))return false;
+      if(rar>=0&&DB.rarity[u.id]!==rar)return false;
+      return true;
+    });
+    if(form==="best"){const m={};r.forEach(u=>{if(!m[u.id]||u.f>m[u.id].f)m[u.id]=u});r=Object.values(m);}
+    else if(form!=="all")r=r.filter(u=>u.f===+form);
+    const S={id:(a,b)=>a.id-b.id,hp:(a,b)=>b.hp-a.hp,atk:(a,b)=>(b.ta||b.ak)-(a.ta||a.ak),
+      dps:(a,b)=>(b.tb>0?(b.ta||b.ak)/b.tb:0)-(a.tb>0?(a.ta||a.ak)/a.tb:0),range:(a,b)=>b.rn-a.rn,cost:(a,b)=>a.co-b.co};
+    r.sort(S[sort]||S.id);return r.slice(0,150);
+  },[q,form,sort,rar,trait]);
+  return <div className="slide-up"><div className="sb">
+    <input className="inp" placeholder="Search name/ID..." value={q} onChange={e=>sQ(e.target.value)}/>
+    <select className="sel" value={form} onChange={e=>sF(e.target.value)}>{[["best","Best Form"],["0","Normal"],["1","Evolved"],["2","True"],["3","Ultra"],["all","All"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
+    <select className="sel" value={sort} onChange={e=>sS(e.target.value)}>{[["id","ID"],["hp","HP"],["atk","ATK"],["dps","DPS"],["range","Range"],["cost","Cost"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
+    <select className="sel" value={rar} onChange={e=>sR(+e.target.value)}><option value={-1}>All Rarity</option>{RN.map((n,i)=><option key={i} value={i}>{n}</option>)}</select>
+    <select className="sel" value={trait} onChange={e=>sT(e.target.value)}><option value="">All Traits</option>{Object.entries(TM).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select>
+  </div>
+  <div style={{overflowX:"auto"}}><table><thead><tr>
+    {["ID","F","Name","HP","ATK","Total","Rng","Spd","Cost","TBA","DPS","Hits","LD","AoE","Traits","Abilities"].map(h=><th key={h}>{h}</th>)}
+  </tr></thead><tbody>{f.map((u,i)=><tr key={i}>
+    <td>{u.id}</td>
+    <td style={{color:["var(--t2)","var(--cyan)","var(--accent)","var(--gold)"][u.f]||"var(--t2)"}}>F{u.f}</td>
+    <td className="nm"><RB id={u.id}/>{u.nm}{DB.talents.includes(u.id)?" \u{1F48E}":""}{DB.series[u.id]?<span style={{fontSize:8,color:"var(--t3)",marginLeft:4}}>{DB.series[u.id]}</span>:null}</td>
+    <td style={{color:"var(--green)"}}>{u.hp.toLocaleString()}</td>
+    <td style={{color:"var(--red)"}}>{u.ak.toLocaleString()}</td>
+    <td style={{color:"var(--red)"}}>{u.ta>u.ak?u.ta.toLocaleString():""}</td>
+    <td style={{color:"var(--cyan)"}}>{u.rn}</td><td>{u.sp}</td>
+    <td style={{color:"var(--purple)"}}>{u.co}</td><td>{u.tb}</td>
+    <td style={{color:"var(--gold)"}}>{dps(u)}</td>
+    <td>{u.hc>1?<b style={{color:"var(--gold)"}}>{u.hc}</b>:""}</td>
+    <td style={{fontSize:9,color:"var(--cyan)"}}>{u.ld||""}</td>
+    <td>{u.ar?"AoE":"ST"}</td>
+    <td><TB tr={u.tr}/></td>
+    <td style={{fontSize:9,color:"var(--t2)"}}>{u.ab?.split("|").slice(0,4).join(" \u00B7 ")}</td>
+  </tr>)}</tbody></table></div>
+  <div style={{color:"var(--t3)",fontSize:10,marginTop:6}}>Showing {f.length} units</div></div>;
+}
+
+function EnemiesTab(){
+  const [q,sQ]=useState(""), [sort,sS]=useState("id"), [trait,sT]=useState("");
+  const f=useMemo(()=>{
+    let r=DB.E.filter(e=>e.hp>0&&(!q||e.nm.toLowerCase().includes(q.toLowerCase())||String(e.id).includes(q))&&(!trait||e.tr?.includes(trait)));
+    const S={id:(a,b)=>a.id-b.id,hp:(a,b)=>b.hp-a.hp,atk:(a,b)=>b.ak-a.ak,range:(a,b)=>b.rn-a.rn};
+    r.sort(S[sort]||S.id);return r.slice(0,200);
+  },[q,sort,trait]);
+  return <div className="slide-up"><div className="sb">
+    <input className="inp" placeholder="Search..." value={q} onChange={e=>sQ(e.target.value)}/>
+    <select className="sel" value={trait} onChange={e=>sT(e.target.value)}><option value="">All Traits</option>
+      {["Red","Float","Black","Metal","White","Angel","Alien","Zombie","Relic","Aku"].map(t=><option key={t} value={t}>{t}</option>)}</select>
+    <select className="sel" value={sort} onChange={e=>sS(e.target.value)}>{[["id","ID"],["hp","HP"],["atk","ATK"],["range","Range"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
+  </div>
+  <div style={{overflowX:"auto"}}><table><thead><tr>{["ID","Name","HP","ATK","Range","Spd","TBA","KB","Traits","Abilities"].map(h=><th key={h}>{h}</th>)}</tr></thead>
+  <tbody>{f.map((e,i)=><tr key={i}>
+    <td>{e.id}</td><td className="nm">{e.nm}</td>
+    <td style={{color:"var(--green)"}}>{e.hp.toLocaleString()}</td>
+    <td style={{color:"var(--red)"}}>{e.ak.toLocaleString()}</td>
+    <td style={{color:"var(--cyan)"}}>{e.rn}</td><td>{e.sp}</td><td>{e.tb}</td><td>{e.kb}</td>
+    <td><ET tr={e.tr}/></td>
+    <td style={{fontSize:9,color:"var(--t2)"}}>{e.ab?.split("|").slice(0,3).join(" \u00B7 ")}</td>
+  </tr>)}</tbody></table></div></div>;
+}
+
+function StagesTab(){
+  const [nq,sNQ]=useState(""), [cq,sCQ]=useState("");
+  const nm=useMemo(()=>nq.length<2?[]:DB.lookup.filter(s=>s[0].toLowerCase().includes(nq.toLowerCase())).slice(0,20),[nq]);
+  const results=useMemo(()=>{if(!cq)return[];return Object.entries(DB.ST).filter(([k])=>k.toLowerCase().includes(cq.toLowerCase())).slice(0,20);},[cq]);
+  return <div className="slide-up"><div className="sb">
+    <input className="inp" style={{minWidth:240}} placeholder="Search by name..." value={nq} onChange={e=>sNQ(e.target.value)}/>
+    <input className="inp" placeholder="...or code (RN001_00)" value={cq} onChange={e=>sCQ(e.target.value)}/>
+  </div>
+  {nm.length>0&&<div style={{marginBottom:12,display:"flex",flexWrap:"wrap",gap:4}}>
+    {nm.map((m,i)=><span key={i} className="chip" onClick={()=>{sCQ(m[1]);sNQ("");}}>
+      <b style={{color:"var(--accent)"}}>{m[0]}</b> <span style={{color:"var(--t2)"}}>{m[1]}</span>
+    </span>)}</div>}
+  {results.map(([code,s])=>{
+    const enemies=s.e.map(en=>{const enemy=DB.E.find(x=>x.id===en.i);return{en,enemy};}).filter(x=>x.enemy);
+    const maxR=Math.max(...enemies.map(x=>x.enemy.rn),100);
+    return <div key={code} className="card fade-in">
+      <h3 style={{color:"var(--accent)",fontSize:14,marginBottom:8}}>{code}</h3>
+      <div style={{fontSize:11,color:"var(--t2)",marginBottom:8}}>Base HP: {s.hp.toLocaleString()}</div>
+      {enemies.map(({en,enemy},j)=><div key={j} style={{margin:"4px 0",padding:"6px 10px",background:"var(--s2)",borderRadius:6,fontSize:11}}>
+        <b>{en.n}</b> <ET tr={enemy.tr}/> {en.m!==100&&<span style={{color:"var(--gold)"}}>{en.m}%</span>} {en.b?<span style={{color:"var(--red)",fontWeight:700}}>{"\u2605"}BOSS</span>:null}
+        <span style={{color:"var(--t2)"}}> HP:{Math.floor(enemy.hp*en.m/100).toLocaleString()} ATK:{Math.floor(enemy.ak*en.m/100).toLocaleString()} Rng:{enemy.rn}</span>
+      </div>)}
+      <div style={{marginTop:8}}>
+        {enemies.map(({en,enemy},j)=><div key={j} className="range-bar" style={{width:Math.max(3,enemy.rn/maxR*100)+"%",background:en.b?"var(--red)":"var(--cyan)",opacity:.7}}>
+          {en.n} ({enemy.rn})
+        </div>)}
+      </div>
+    </div>;})}
+  </div>;
+}
+
+function RecTab(){
+  const [nq,sNQ]=useState(""), [code,sCode]=useState(""), [result,sResult]=useState(null);
+  const nm=useMemo(()=>nq.length<2?[]:DB.lookup.filter(s=>s[0].toLowerCase().includes(nq.toLowerCase())).slice(0,10),[nq]);
+  const T2E={R:"Red",F:"Float",B:"Black",M:"Metal",W:"White",A:"Angel",L:"Alien",Z:"Zombie",E:"Relic",K:"Aku"};
+  
+  const analyze=useCallback((c)=>{
+    const key=Object.keys(DB.ST).find(k=>k.toLowerCase().includes(c.toLowerCase()));
+    if(!key){sResult({error:"Stage not found"});return;}
+    const stage=DB.ST[key];
+    const stageTraits={};
+    const stageEnemies=stage.e.map(se=>{
+      const enemy=DB.E.find(x=>x.id===se.i);if(!enemy)return null;
+      const traits=(enemy.tr||"").split(",").filter(t=>t);
+      traits.forEach(t=>{stageTraits[t]=(stageTraits[t]||0)+1;});
+      return{...se,enemy,traits};
+    }).filter(Boolean);
+    const threats=stageEnemies.filter(e=>e.enemy.hp>0).sort((a,b)=>(b.enemy.hp*b.m)-(a.enemy.hp*a.m));
+    const candidates=DB.U.filter(u=>u.f===2&&u.ak>0);
+    const scored=candidates.map(u=>{
+      let score=0;const reasons=[];
+      const uTraits=(u.tr||"").split("").map(c=>T2E[c]).filter(t=>t);
+      uTraits.forEach(ut=>{if(stageTraits[ut]){score+=stageTraits[ut]*20;threats.slice(0,3).forEach(th=>{if(th.traits.includes(ut)){score+=50;reasons.push("vs "+th.enemy.nm);}});}});
+      const ab=u.ab||"";
+      if(ab.includes("Massive")||ab.includes("InsDmg")){score+=30;reasons.push("Massive");}
+      if(ab.includes("Resist")||ab.includes("InsRes")){score+=25;reasons.push("Resistant");}
+      if(ab.includes("Frz")&&score>0){score+=35;reasons.push("Freeze");}
+      if(ab.includes("Slw")&&score>0){score+=30;reasons.push("Slow");}
+      if(stageTraits.Metal&&ab.includes("Crit")){score+=50;reasons.push("Crit");}
+      if(stageEnemies.some(e=>e.enemy.bar>0)&&ab.includes("BrkBar")){score+=40;reasons.push("Barrier Break");}
+      const d=u.tb>0?(u.ta||u.ak)/u.tb:0;score+=Math.min(d*0.5,30);
+      const maxR=Math.max(...stageEnemies.map(e=>e.enemy.rn));
+      if(u.rn>maxR){score+=15;reasons.push("Outranges");}
+      if(u.co>4000)score-=10;
+      const isMeat=u.co<=200&&u.cd<=250;
+      return{u,score,reasons:[...new Set(reasons)].slice(0,4),isMeat,dps:d};
+    }).sort((a,b)=>b.score-a.score);
+    sResult({key,stage,stageTraits,stageEnemies,meats:scored.filter(s=>s.isMeat).slice(0,4),attackers:scored.filter(s=>!s.isMeat&&s.score>20).slice(0,15)});
+  },[]);
+
+  return <div className="slide-up">
+    <h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Stage Lineup Recommender</h3>
+    <div className="sb">
+      <input className="inp" style={{minWidth:200}} placeholder="Stage name..." value={nq} onChange={e=>sNQ(e.target.value)}/>
+      <input className="inp" style={{minWidth:180}} placeholder="Stage code..." value={code} onChange={e=>sCode(e.target.value)}/>
+      <button className="btn" onClick={()=>analyze(code)}>Analyze</button>
+    </div>
+    {nm.length>0&&<div style={{marginBottom:12,display:"flex",flexWrap:"wrap",gap:4}}>
+      {nm.map((m,i)=><span key={i} className="chip" onClick={()=>{sCode(m[1]);sNQ("");analyze(m[1]);}}>
+        <b style={{color:"var(--accent)"}}>{m[0]}</b> <span style={{color:"var(--t2)"}}>{m[1]}</span>
+      </span>)}</div>}
+    {result?.error&&<div style={{color:"var(--red)"}}>{result.error}</div>}
+    {result&&!result.error&&<div className="fade-in">
+      <div className="card">
+        <h3 style={{color:"var(--accent)",marginBottom:8}}>{result.key}</h3>
+        {result.stageEnemies.map((se,i)=><div key={i} style={{margin:"4px 0",padding:"6px 8px",background:"var(--s2)",borderRadius:6,fontSize:11}}>
+          <b>{se.enemy.nm}</b> <ET tr={se.enemy.tr}/> {se.m!==100&&<span style={{color:"var(--gold)"}}>{se.m}%</span>} {se.b?<span style={{color:"var(--red)",fontWeight:700}}>{"\u2605"}</span>:null}
+          <span style={{color:"var(--t2)"}}> HP:{Math.floor(se.enemy.hp*se.m/100).toLocaleString()} ATK:{Math.floor(se.enemy.ak*se.m/100).toLocaleString()}</span>
+        </div>)}
+        <div style={{marginTop:8}}><b style={{color:"var(--accent)"}}>Dominant: </b>{Object.entries(result.stageTraits).sort((a,b)=>b[1]-a[1]).map(([t,c],i)=><span key={i} style={{color:TC[t]||"#ccc",fontWeight:700,marginRight:8}}>{t}({c})</span>)}</div>
+      </div>
+      {result.meats.length>0&&<div className="card"><h3 style={{color:"var(--green)",marginBottom:8}}>Meatshields</h3>
+        <div style={{display:"flex",flexWrap:"wrap",gap:6}}>{result.meats.map((m,i)=><span key={i} className="chip"><b>{m.u.nm}</b> <span style={{color:"var(--t2)"}}>${m.u.co}</span></span>)}</div></div>}
+      <div className="card"><h3 style={{color:"var(--accent)",marginBottom:8}}>Recommended Units</h3>
+        <table><thead><tr>{["Unit","Score","DPS","Range","Cost","Why"].map(h=><th key={h}>{h}</th>)}</tr></thead>
+        <tbody>{result.attackers.map((a,i)=><tr key={i}>
+          <td className="nm"><RB id={a.u.id}/>{a.u.nm}{a.u.hc>1?<span style={{color:"var(--gold)",fontSize:10}}> [{a.u.hc}hit]</span>:""}</td>
+          <td style={{color:"var(--accent)",fontWeight:700}}>{a.score.toFixed(0)}</td>
+          <td style={{color:"var(--gold)"}}>{a.dps.toFixed(1)}</td>
+          <td style={{color:"var(--cyan)"}}>{a.u.rn}</td>
+          <td style={{color:"var(--purple)"}}>{a.u.co}</td>
+          <td style={{fontSize:10,color:"var(--t2)"}}>{a.reasons.join(", ")}</td>
+        </tr>)}</tbody></table></div>
+    </div>}
+  </div>;
+}
+
+function CompareTab(){
+  const ids=useMemo(()=>[...new Set(DB.U.map(u=>u.id))],[]);
+  const [a,sA]=useState(ids[0]||0), [b,sB]=useState(ids[1]||1);
+  const ua=DB.U.find(x=>x.id===a&&x.f===2)||DB.U.find(x=>x.id===a);
+  const ub=DB.U.find(x=>x.id===b&&x.f===2)||DB.U.find(x=>x.id===b);
+  const stats=[["HP","hp",false],["ATK","ta",false],["Range","rn",false],["Speed","sp",false],["Cost","co",true],["TBA","tb",true],["KB","kb",false]];
+  const getVal=(u,k)=>k==="ta"?(u.ta||u.ak):u[k];
+  return <div className="slide-up">
+    <h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Unit Comparison</h3>
+    <div className="sb">
+      <select className="sel" style={{minWidth:200}} value={a} onChange={e=>sA(+e.target.value)}>{ids.map(id=>{const u=DB.U.find(x=>x.id===id&&x.f===2)||DB.U.find(x=>x.id===id);return <option key={id} value={id}>{u?.nm} ({id})</option>;})}</select>
+      <span style={{color:"var(--accent)",fontWeight:800,fontSize:18,fontFamily:"'Righteous',cursive"}}>VS</span>
+      <select className="sel" style={{minWidth:200}} value={b} onChange={e=>sB(+e.target.value)}>{ids.map(id=>{const u=DB.U.find(x=>x.id===id&&x.f===2)||DB.U.find(x=>x.id===id);return <option key={id} value={id}>{u?.nm} ({id})</option>;})}</select>
+    </div>
+    {ua&&ub&&<div className="fade-in">
+      <div className="vs-grid" style={{marginBottom:16}}>
+        <div className="vs-cell" style={{textAlign:"right",color:"var(--cyan)"}}><RB id={ua.id}/>{ua.nm}</div>
+        <div className="vs-label">STAT</div>
+        <div className="vs-cell" style={{color:"var(--accent)"}}><RB id={ub.id}/>{ub.nm}</div>
+        {stats.map(([label,key,lower])=>{
+          const av=getVal(ua,key),bv=getVal(ub,key);
+          const aw=lower?(av<bv):(av>bv), bw=lower?(bv<av):(bv>av);
+          return <React.Fragment key={key}>
+            <div className={"vs-cell"+(aw?" vs-win":"")} style={{textAlign:"right"}}>{av.toLocaleString()}</div>
+            <div className="vs-label">{label}</div>
+            <div className={"vs-cell"+(bw?" vs-win":"")}>{bv.toLocaleString()}</div>
+          </React.Fragment>;
+        })}
+        <div className="vs-cell" style={{textAlign:"right",color:"var(--gold)"}}>{dps(ua)}/f</div>
+        <div className="vs-label">DPS</div>
+        <div className="vs-cell" style={{color:"var(--gold)"}}>{dps(ub)}/f</div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        {[ua,ub].map((u,i)=><div key={i} className="card" style={{fontSize:11,color:"var(--t2)"}}>
+          <b style={{color:"var(--t)"}}>{u.nm}</b><br/>
+          Hits: {u.hc||1} | AoE: {u.ar?"Yes":"No"} | LD: {u.ld||"No"}<br/>
+          Traits: <TB tr={u.tr}/><br/>
+          {u.ab&&<>Abilities: {u.ab.split("|").join(" \u00B7 ")}<br/></>}
+          {DB.series[u.id]&&<>Series: {DB.series[u.id]}<br/></>}
+          EffHP: {(u.hp*u.kb).toLocaleString()} | DPS/$: {u.tb>0&&u.co>0?((u.ta||u.ak)/u.tb*30/u.co).toFixed(4):"\u2014"}
+        </div>)}
+      </div>
+    </div>}
+  </div>;
+}
+
+function CalcTab(){
+  const ids=useMemo(()=>[...new Set(DB.U.map(u=>u.id))].slice(0,200),[]);
+  const [uid,sU]=useState(ids[0]||0), [form,sF]=useState(2), [lv,sL]=useState(30), [tr,sT]=useState(300);
+  const u=DB.U.find(x=>x.id===uid&&x.f===form)||DB.U.find(x=>x.id===uid);
+  const lvM=lv<=20?1+(lv-1)*0.2:(1+19*0.2)+(lv-20)*0.2;
+  const trM=1+1.5*tr/300;
+  const hp=u?Math.floor(u.hp*lvM*trM):0;
+  const atk=u?Math.floor(u.ak*lvM*trM):0;
+  const totalAtk=u?Math.floor((u.ta||u.ak)*lvM*trM):0;
+  const ds=u&&u.tb>0?(totalAtk/u.tb*30).toFixed(0):"\u2014";
+  return <div className="slide-up">
+    <h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Stat Calculator</h3>
+    <div className="sb">
+      <select className="sel" style={{minWidth:200}} value={uid} onChange={e=>sU(+e.target.value)}>{ids.map(id=>{const u2=DB.U.find(x=>x.id===id&&x.f===2)||DB.U.find(x=>x.id===id);return <option key={id} value={id}>{u2?.nm}</option>;})}</select>
+      <select className="sel" value={form} onChange={e=>sF(+e.target.value)}>{[0,1,2,3].map(f=><option key={f} value={f}>Form {f}</option>)}</select>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:12,marginBottom:8}}><span style={{color:"var(--t2)",fontSize:12,minWidth:60}}>Level</span><input type="range" min={1} max={50} value={lv} onChange={e=>sL(+e.target.value)} style={{flex:1}}/><b style={{minWidth:24}}>{lv}</b></div>
+    <div className="sb"><span style={{color:"var(--t2)",fontSize:12}}>Treasure</span>
+      <select className="sel" value={tr} onChange={e=>sT(+e.target.value)}>{[[300,"300% (All Superior)"],[200,"200% (Ch1+2)"],[100,"100%"],[0,"None"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></div>
+    {u&&<div className="fade-in">
+      <div style={{fontSize:18,fontWeight:800,color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:16}}>{u.nm} Lv.{lv}{u.hc>1?" ["+u.hc+" hits]":""}{u.ld?" "+u.ld:""}</div>
+      <div className="grid">
+        {[["HP",hp,"var(--green)","Base: "+u.hp],["ATK",atk,"var(--red)","Total: "+totalAtk.toLocaleString()],["DPS/sec",ds,"var(--gold)","TBA: "+u.tb+"f"],["Range",u.rn,"var(--cyan)",""],["Speed",u.sp,"var(--t)",""],["Cost",u.co,"var(--purple)",""],["CD",(u.cd/30).toFixed(1)+"s","var(--t)",u.cd+"f"],["KB",u.kb,"var(--t)",""]].map(([l,v,c,s],i)=>
+          <div key={i} className="stat-card"><div className="l">{l}</div><div className="v" style={{color:c}}>{typeof v==="number"?v.toLocaleString():v}</div>{s&&<div style={{fontSize:9,color:"var(--t3)"}}>{s}</div>}</div>
+        )}
+      </div>
+      <div className="card">
+        <div style={{fontSize:12,fontWeight:700,color:"var(--accent)",marginBottom:6}}>Effective Stats</div>
+        <div style={{display:"flex",gap:20,flexWrap:"wrap",fontSize:12}}>
+          <div><span style={{color:"var(--t2)"}}>EffHP (HP{"\u00D7"}KB): </span><b style={{color:"var(--green)"}}>{(hp*u.kb).toLocaleString()}</b></div>
+          <div><span style={{color:"var(--t2)"}}>DPS/cost: </span><b style={{color:"var(--gold)"}}>{u.tb>0&&u.co>0?(totalAtk/u.tb*30/u.co).toFixed(3):"\u2014"}</b></div>
+        </div>
+      </div>
+      {u.tr&&<div style={{marginTop:8}}>Targets: <TB tr={u.tr}/></div>}
+      {u.ab&&<div style={{marginTop:4,fontSize:11,color:"var(--t2)"}}>Abilities: {u.ab.split("|").join(" \u00B7 ")}</div>}
+      <div style={{marginTop:8,fontSize:11,color:"var(--t3)"}}>Multipliers: Level {"\u00D7"}{lvM.toFixed(2)} {"\u00B7"} Treasure {"\u00D7"}{trM.toFixed(2)} {"\u00B7"} Combined {"\u00D7"}{(lvM*trM).toFixed(2)}</div>
+    </div>}
+  </div>;
+}
+
+function RankingsTab(){
+  const [cat,sC]=useState("dps");
+  const ranked=useMemo(()=>{
+    let p=DB.U.filter(u=>u.f===2&&u.ak>0);
+    const S={dps:(a,b)=>(b.tb>0?(b.ta||b.ak)/b.tb:0)-(a.tb>0?(a.ta||a.ak)/a.tb:0),hp:(a,b)=>b.hp-a.hp,atk:(a,b)=>(b.ta||b.ak)-(a.ta||a.ak),range:(a,b)=>b.rn-a.rn,speed:(a,b)=>b.sp-a.sp,eff:(a,b)=>(b.tb>0&&b.co>0?(b.ta||b.ak)/b.tb/b.co:0)-(a.tb>0&&a.co>0?(a.ta||a.ak)/a.tb/a.co:0)};
+    p.sort(S[cat]||S.dps);return p.slice(0,30);
+  },[cat]);
+  return <div className="slide-up">
+    <h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Leaderboards (True Form)</h3>
+    <select className="sel" value={cat} onChange={e=>sC(e.target.value)}>{[["dps","DPS"],["hp","HP"],["atk","ATK"],["range","Range"],["speed","Speed"],["eff","Cost Efficiency"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
+    <table style={{marginTop:12}}><thead><tr>{["#","Unit","HP","ATK","Rng","Cost","DPS","Traits"].map(h=><th key={h}>{h}</th>)}</tr></thead>
+    <tbody>{ranked.map((u,i)=><tr key={i}>
+      <td style={{color:i<3?"var(--gold)":"var(--t3)"}}>#{i+1}</td>
+      <td className="nm"><RB id={u.id}/>{u.nm}</td>
+      <td style={{color:"var(--green)"}}>{u.hp.toLocaleString()}</td><td style={{color:"var(--red)"}}>{(u.ta||u.ak).toLocaleString()}</td>
+      <td style={{color:"var(--cyan)"}}>{u.rn}</td><td style={{color:"var(--purple)"}}>{u.co}</td>
+      <td style={{color:"var(--gold)"}}>{dps(u)}</td><td><TB tr={u.tr}/></td>
+    </tr>)}</tbody></table></div>;
+}
+
+function DPSChart(){
+  const ids=useMemo(()=>[...new Set(DB.U.map(u=>u.id))],[]);
+  const [a,sA]=useState(ids[0]||0), [b,sB]=useState(ids[1]||1), [c,sC]=useState(-1);
+  const sel=useMemo(()=>[a,b,c].filter(x=>x>=0).map(id=>DB.U.find(x=>x.id===id&&x.f===2)||DB.U.find(x=>x.id===id)).filter(Boolean),[a,b,c]);
+  const data=useMemo(()=>{
+    const d=[];
+    for(let t=0;t<=300;t+=2){
+      const p={frame:t,sec:(t/30).toFixed(1)};
+      sel.forEach((u,i)=>{
+        const fs=u.fs||Math.floor(u.tb*0.3);
+        const iv=u.tb;let dmg=0;
+        if(iv>0){const atks=Math.floor(Math.max(0,t-fs)/iv)+(t>=fs?1:0);dmg=atks*(u.ta||u.ak);}
+        p["u"+i]=dmg;
+      });d.push(p);
+    }return d;
+  },[sel]);
+  const colors=["#00e5ff","#ff5722","#b388ff"];
+  const {LineChart,Line,XAxis,YAxis,CartesianGrid,Tooltip,ResponsiveContainer}=Recharts;
+  return <div className="slide-up">
+    <h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>DPS Timeline</h3>
+    <p style={{color:"var(--t2)",fontSize:12,marginBottom:12}}>Cumulative damage over 10 seconds. Models foreswing + attack intervals.</p>
+    <div className="sb">
+      {[["A",a,sA],["B",b,sB],["C",c,sC]].map(([l,v,s],i)=><select key={i} className="sel" style={{minWidth:180}} value={v} onChange={e=>s(+e.target.value)}>
+        {i===2&&<option value={-1}>None</option>}
+        {ids.map(id=>{const u=DB.U.find(x=>x.id===id&&x.f===2)||DB.U.find(x=>x.id===id);return <option key={id} value={id}>{u?.nm}</option>;})}
+      </select>)}
+    </div>
+    <div style={{width:"100%",height:350}}>
+      <ResponsiveContainer><LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#2a2640"/>
+        <XAxis dataKey="sec" stroke="#4a4560" tick={{fontSize:10}}/>
+        <YAxis stroke="#4a4560" tick={{fontSize:10}} tickFormatter={v=>v>=1000?(v/1000).toFixed(0)+"K":v}/>
+        <Tooltip contentStyle={{background:"#0f0e15",border:"1px solid #2a2640",borderRadius:8,fontSize:11}}/>
+        {sel.map((_,i)=><Line key={i} type="stepAfter" dataKey={"u"+i} stroke={colors[i]} strokeWidth={2} dot={false}/>)}
+      </LineChart></ResponsiveContainer>
+    </div>
+    <div style={{display:"flex",gap:16,flexWrap:"wrap",marginTop:8}}>
+      {sel.map((u,i)=><div key={i} style={{display:"flex",alignItems:"center",gap:6}}>
+        <div style={{width:12,height:12,borderRadius:2,background:colors[i]}}/>
+        <span className="nm"><RB id={u.id}/>{u.nm}</span>
+        <span style={{fontSize:10,color:"var(--t2)"}}>DPS/s: {dpsSec(u)} | FS: {u.fs||"?"}f | TBA: {u.tb}f</span>
+      </div>)}
+    </div></div>;
+}
+
+function CombosTab(){
+  const [q,sQ]=useState(""), [eff,sE]=useState("");
+  const f=useMemo(()=>DB.combos.filter(c=>{
+    if(eff&&!c[3]?.includes(eff))return false;
+    if(q){const s=(c[1]||"")+" "+(c[2]||[]).join(" ")+" "+(c[3]||"");if(!s.toLowerCase().includes(q.toLowerCase()))return false;}
+    return true;}).slice(0,100),[q,eff]);
+  const szC={S:"var(--t2)",M:"var(--cyan)",L:"var(--green)",XL:"var(--accent)",XXL:"var(--pink)"};
+  return <div className="slide-up">
+    <h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>NyanCombos ({DB.combos.length})</h3>
+    <div className="sb">
+      <input className="inp" placeholder="Search name/unit/effect..." value={q} onChange={e=>sQ(e.target.value)}/>
+      <select className="sel" value={eff} onChange={e=>sE(e.target.value)}><option value="">All Effects</option>
+        {["Atk","HP","Speed","Cost","Recharge","Research","Money","Cannon","Worker"].map(e=><option key={e} value={e}>{e}</option>)}</select>
+    </div>
+    <table><thead><tr>{["#","Name","Units","Effect","Size"].map(h=><th key={h}>{h}</th>)}</tr></thead>
+    <tbody>{f.map((c,i)=><tr key={i}>
+      <td>{c[0]}</td>
+      <td style={{color:"var(--gold)",fontWeight:600,fontFamily:"'DM Sans',sans-serif"}}>{c[1]}</td>
+      <td style={{fontFamily:"'DM Sans',sans-serif",fontSize:11,whiteSpace:"normal"}}>{(c[2]||[]).join(" + ")}</td>
+      <td style={{color:"var(--accent)"}}>{c[3]}</td>
+      <td style={{color:szC[c[4]]||"var(--t2)",fontWeight:700}}>{c[4]}</td>
+    </tr>)}</tbody></table></div>;
+}
+
+function DropsTab(){
+  const [q,sQ]=useState("");
+  const f=DB.drops.filter(d=>!q||d[2]?.toLowerCase().includes(q.toLowerCase()));
+  return <div className="slide-up"><h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Stage Drops ({DB.drops.length})</h3>
+    <input className="inp" placeholder="Search unit..." value={q} onChange={e=>sQ(e.target.value)} style={{marginBottom:12}}/>
+    <table><thead><tr>{["Stage","ID","Unit"].map(h=><th key={h}>{h}</th>)}</tr></thead>
+    <tbody>{f.map((d,i)=><tr key={i}><td>{d[0]}</td><td>{d[1]}</td><td className="nm">{d[2]}</td></tr>)}</tbody></table></div>;
+}
+
+function XPTab(){
+  const [rar,sR]=useState(-1);
+  const data=useMemo(()=>{
+    const xpMap={0:47000,1:95000,2:175000,3:350000,4:700000,5:1000000};
+    return DB.U.filter(u=>u.f===2&&u.ak>0&&u.tb>0).map(u=>{
+      const d=(u.ta||u.ak)/u.tb;const r=DB.rarity[u.id]||-1;const xp=xpMap[r]||200000;
+      return{id:u.id,nm:u.nm,dps:d,eff:(d*5.8/xp*10000),xp,rar:r};
+    }).sort((a,b)=>b.eff-a.eff);
+  },[]);
+  const f=rar>=0?data.filter(d=>d.rar===rar):data;
+  return <div className="slide-up"><h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>XP Efficiency</h3>
+    <select className="sel" value={rar} onChange={e=>sR(+e.target.value)} style={{marginBottom:12}}><option value={-1}>All</option>{RN.map((n,i)=><option key={i} value={i}>{n}</option>)}</select>
+    <table><thead><tr>{["#","Unit","Base DPS","XP","DPS/10K XP"].map(h=><th key={h}>{h}</th>)}</tr></thead>
+    <tbody>{f.slice(0,40).map((d,i)=><tr key={i}>
+      <td style={{color:i<3?"var(--gold)":"var(--t3)"}}>#{i+1}</td>
+      <td className="nm"><RB id={d.id}/>{d.nm}</td>
+      <td style={{color:"var(--gold)"}}>{d.dps.toFixed(1)}</td>
+      <td style={{color:"var(--t2)"}}>{d.xp.toLocaleString()}</td>
+      <td style={{color:"var(--accent)",fontWeight:700}}>{d.eff.toFixed(3)}</td>
+    </tr>)}</tbody></table></div>;
+}
+
+function CatfruitTab(){
+  const [q,sQ]=useState(""), [fr,sF]=useState("");
+  const f=DB.catfruit.filter(c=>(!q||c[1]?.toLowerCase().includes(q.toLowerCase()))&&(!fr||c[2]?.includes(fr))).slice(0,60);
+  return <div className="slide-up"><h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Catfruit Planner ({DB.catfruit.length})</h3>
+    <div className="sb"><input className="inp" placeholder="Search unit..." value={q} onChange={e=>sQ(e.target.value)}/>
+      <select className="sel" value={fr} onChange={e=>sF(e.target.value)}><option value="">All</option>{["Red","Blue","Green","Yellow","Purple","Epic","Elder","Aku"].map(f=><option key={f} value={f}>{f}</option>)}</select></div>
+    <table><thead><tr>{["ID","Unit","Required","XP","Type"].map(h=><th key={h}>{h}</th>)}</tr></thead>
+    <tbody>{f.map((c,i)=><tr key={i}>
+      <td>{c[0]}</td><td className="nm"><RB id={c[0]}/>{c[1]}</td>
+      <td style={{fontSize:11,whiteSpace:"normal"}}>{c[2]}</td>
+      <td style={{color:"var(--t2)"}}>{c[3]?.toLocaleString()}</td>
+      <td style={{color:c[4]==="UF"?"var(--pink)":"var(--cyan)",fontWeight:700}}>{c[4]}</td>
+    </tr>)}</tbody></table></div>;
+}
+
+function WaveTab(){
+  const [atk,sA]=useState(5000), [type,sT]=useState("wave"), [lv,sL]=useState(3);
+  const dmg=type==="wave"?atk*0.05*lv:type==="miniwave"?atk*0.01*lv:type==="surge"?atk:atk*0.2;
+  return <div className="slide-up"><h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Wave & Surge</h3>
+    <div className="card"><h3 style={{color:"var(--cyan)",marginBottom:8}}>Wave</h3><div style={{fontSize:12,color:"var(--t2)",lineHeight:2}}>5% ATK per level. Mini: 1% per level.</div></div>
+    <div className="card"><h3 style={{color:"var(--red)",marginBottom:8}}>Surge</h3><div style={{fontSize:12,color:"var(--t2)",lineHeight:2}}>100% ATK in area. Duration: level {"\u00D7"} 20f. Mini: 20%.</div></div>
+    <div className="card"><h3 style={{color:"var(--gold)",marginBottom:8}}>Calculator</h3>
+      <div className="sb">
+        <input className="inp" type="number" value={atk} onChange={e=>sA(+e.target.value)} style={{width:100}}/>
+        <select className="sel" value={type} onChange={e=>sT(e.target.value)}>{[["wave","Wave"],["miniwave","Mini Wave"],["surge","Surge"],["minisurge","Mini Surge"]].map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
+        <span style={{color:"var(--t2)",fontSize:12}}>Lv:</span>
+        <input type="range" min={1} max={20} value={lv} onChange={e=>sL(+e.target.value)}/><b>{lv}</b>
+      </div>
+      <div style={{padding:14,background:"var(--s2)",borderRadius:8,fontSize:16,marginTop:8}}>Damage: <b style={{color:"var(--red)",fontSize:22}}>{Math.floor(dmg).toLocaleString()}</b></div>
+    </div></div>;
+}
+
+function TierTab(){
+  const ubers=useMemo(()=>DB.U.filter(u=>u.f===2&&DB.rarity[u.id]===4&&u.ak>0).map(u=>{
+    const d=u.tb>0?(u.ta||u.ak)/u.tb:0;const tc=(u.tr||"").length;const ac=(u.ab||"").split("|").filter(a=>a).length;
+    let s=d*2+tc*15+ac*5;
+    if((u.ab||"").includes("Frz")||(u.ab||"").includes("Slw"))s+=25;
+    if((u.ab||"").includes("Massive")||(u.ab||"").includes("InsDmg"))s+=20;
+    if(u.rn>=400)s+=15;if(u.hc>1)s+=10;if(u.ld)s+=10;
+    return{u,d,s,sr:DB.series[u.id]||""};
+  }).sort((a,b)=>b.s-a.s),[]);
+  const mx=ubers[0]?.s||1;
+  const tiers=[{n:"S",c:"var(--accent)",mn:.85},{n:"A",c:"var(--gold)",mn:.65},{n:"B",c:"var(--green)",mn:.45},{n:"C",c:"var(--cyan)",mn:.25},{n:"D",c:"var(--t2)",mn:0}];
+  return <div className="slide-up"><h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Uber Tier List (Auto)</h3>
+    <p style={{color:"var(--t2)",fontSize:12,marginBottom:12}}>Data-driven scoring: DPS + traits + abilities + range + CC.</p>
+    {tiers.map(t=>{
+      const units=ubers.filter(u=>{const p=u.s/mx;return p>=t.mn&&(t.mn===0||p<t.mn+.2);});
+      if(!units.length)return null;
+      return <div key={t.n} style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+          <span className="tier-badge" style={{background:t.c}}>{t.n}</span>
+          <span style={{color:"var(--t3)",fontSize:10}}>{units.length} units</span>
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+          {units.slice(0,20).map((u,i)=><span key={i} className="chip" title={"Score: "+u.s.toFixed(0)}>
+            <RB id={u.u.id}/><b>{u.u.nm}</b>
+            {u.sr&&<span style={{color:"var(--t3)",fontSize:8,marginLeft:3}}>{u.sr.replace(/Ancient Heroes: |Justice Strikes Back: |Lords of Destruction: |Cyber Academy /g,"")}</span>}
+          </span>)}
+        </div>
+      </div>;
+    })}</div>;
+}
+
+function EHPTab(){
+  const ids=useMemo(()=>[...new Set(DB.U.map(u=>u.id))].slice(0,200),[]);
+  const [uid,sU]=useState(ids[0]||0), [eid,sE]=useState(0), [lv,sL]=useState(30), [mag,sM]=useState(100);
+  const u=DB.U.find(x=>x.id===uid&&x.f===2)||DB.U.find(x=>x.id===uid);
+  const en=DB.E.find(x=>x.id===eid);
+  const lvM=lv<=20?1+(lv-1)*0.2:(1+19*0.2)+(lv-20)*0.2;
+  const uHP=u?Math.floor(u.hp*lvM*2.5):0;
+  const eATK=en?Math.floor(en.ak*mag/100):0;
+  const hits=eATK>0?Math.ceil(uHP/eATK):Infinity;
+  return <div className="slide-up"><h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Effective HP vs Enemy</h3>
+    <div className="sb">
+      <select className="sel" style={{minWidth:180}} value={uid} onChange={e=>sU(+e.target.value)}>{ids.map(id=>{const u2=DB.U.find(x=>x.id===id&&x.f===2)||DB.U.find(x=>x.id===id);return <option key={id} value={id}>{u2?.nm}</option>;})}</select>
+      <select className="sel" style={{minWidth:180}} value={eid} onChange={e=>sE(+e.target.value)}>{DB.E.filter(x=>x.hp>0).slice(0,300).map(x=><option key={x.id} value={x.id}>{x.nm}</option>)}</select>
+      <span style={{color:"var(--t2)",fontSize:11}}>Lv:</span><input type="range" min={1} max={50} value={lv} onChange={e=>sL(+e.target.value)}/><b>{lv}</b>
+      <span style={{color:"var(--t2)",fontSize:11}}>Mag:</span><input className="inp" type="number" value={mag} onChange={e=>sM(+e.target.value)} style={{width:70}}/>
+    </div>
+    {u&&en&&<div style={{textAlign:"center"}} className="fade-in">
+      <div style={{fontSize:11,color:"var(--t3)"}}>HITS TO KILL</div>
+      <div style={{fontSize:48,fontWeight:800,fontFamily:"'Righteous',cursive",color:hits<=2?"var(--red)":hits<=5?"var(--gold)":"var(--green)"}}>{hits===Infinity?"\u221E":hits}</div>
+      <div style={{fontSize:12,color:"var(--t2)"}}>With {u.kb} KB: <b style={{color:"var(--gold)"}}>{hits===Infinity?"\u221E":hits*u.kb}</b> total hits</div>
+    </div>}</div>;
+}
+
+function TFPriTab(){
+  const pri=useMemo(()=>{
+    const r=[];
+    DB.U.filter(u=>u.f===2&&u.ak>0).forEach(tf=>{
+      const ev=DB.U.find(u=>u.id===tf.id&&u.f===1);if(!ev||ev.ak<=0)return;
+      const dg=tf.tb>0&&ev.tb>0?((tf.ta||tf.ak)/tf.tb-(ev.ta||ev.ak)/ev.tb):0;
+      const hg=tf.hp-ev.hp;const cf=DB.catfruit.find(c=>c[0]===tf.id&&c[4]==="TF");
+      if(dg>0||hg>0)r.push({u:tf,dg,hg,cf,tg:dg*3+hg*0.01});
+    });return r.sort((a,b)=>b.tg-a.tg);
+  },[]);
+  return <div className="slide-up"><h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>True Form Priority</h3>
+    <table><thead><tr>{["#","Unit","DPS Gain","HP Gain","Catfruit","XP"].map(h=><th key={h}>{h}</th>)}</tr></thead>
+    <tbody>{pri.slice(0,40).map((p,i)=><tr key={i}>
+      <td style={{color:i<3?"var(--gold)":"var(--t3)"}}>#{i+1}</td>
+      <td className="nm"><RB id={p.u.id}/>{p.u.nm}</td>
+      <td style={{color:p.dg>0?"var(--green)":"var(--red)"}}>{p.dg>0?"+":""}{p.dg.toFixed(1)}</td>
+      <td style={{color:"var(--green)"}}>+{p.hg.toLocaleString()}</td>
+      <td style={{fontSize:10,color:"var(--t2)"}}>{p.cf?p.cf[2]:"\u2014"}</td>
+      <td style={{color:"var(--t2)"}}>{p.cf?p.cf[3].toLocaleString():"\u2014"}</td>
+    </tr>)}</tbody></table></div>;
+}
+
+function SeedTab(){
+  const [seed,sS]=useState("");
+  return <div className="slide-up"><h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Seed Tracker</h3>
+    <div className="sb">
+      <input className="inp" placeholder="Enter seed..." value={seed} onChange={e=>sS(e.target.value)} style={{minWidth:200}}/>
+      <button className="btn" onClick={()=>{if(seed)window.open("https://bc.godfat.org/?seed="+seed,"_blank");}} disabled={!seed}>Open Tracker</button>
+      <button className="btn2" onClick={()=>window.open("https://bc-seek.godfat.org/seek?lang=en","_blank")}>Find My Seed</button>
+    </div>
+    <div className="card"><h3 style={{color:"var(--gold)",marginBottom:8}}>How It Works</h3>
+      <div style={{fontSize:12,color:"var(--t2)",lineHeight:2}}>
+        1. Do 7-11 single pulls on any banner<br/>
+        2. Go to bc-seek.godfat.org, enter cats in order<br/>
+        3. Get your seed number, enter above<br/>
+        4. See your entire future pull track on every banner
+      </div></div>
+    <div className="card"><h3 style={{color:"var(--cyan)",marginBottom:8}}>Key Mechanics</h3>
+      <div style={{fontSize:12,color:"var(--t2)",lineHeight:2}}>
+        <b style={{color:"var(--t)"}}>Track A/B:</b> Two parallel tracks. Guaranteed pulls switch tracks.<br/>
+        <b style={{color:"var(--t)"}}>Duplicate Rare:</b> Same rare twice in a row {"\u2192"} track switch.<br/>
+        <b style={{color:"var(--t)"}}>Platinum Ticket:</b> Uber pool only. No track switch.<br/>
+        <b style={{color:"var(--t)"}}>Epicfest/Uberfest:</b> Best for seed tracking — largest uber pools.
+      </div></div></div>;
+}
+
+function MyCatsTab(){
+  const [owned,setOwned]=useState({});
+  const [q,sQ]=useState("");
+  const [loading,sL]=useState(true);
+  useEffect(()=>{(async()=>{try{const r=await window.storage?.get("my-cats");if(r?.value)setOwned(JSON.parse(r.value));}catch(e){}sL(false);})();},[]);
+  const save=useCallback(async(d)=>{setOwned(d);try{await window.storage?.set("my-cats",JSON.stringify(d));}catch(e){}},[]);
+  const toggle=useCallback((id)=>{const n={...owned};if(n[id])delete n[id];else n[id]={lv:30};save(n);},[owned,save]);
+  const setLv=useCallback((id,lv)=>{save({...owned,[id]:{...(owned[id]||{}),lv}});},[owned,save]);
+  const uids=useMemo(()=>[...new Set(DB.U.map(u=>u.id))],[]);
+  const f=useMemo(()=>uids.map(id=>DB.U.find(x=>x.id===id&&x.f===2)||DB.U.find(x=>x.id===id)).filter(u=>u&&(!q||u.nm.toLowerCase().includes(q.toLowerCase()))),[uids,q]);
+  if(loading)return <div className="loading">Loading your cats...</div>;
+  return <div className="slide-up"><h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>My Cats ({Object.keys(owned).length} owned)</h3>
+    <p style={{color:"var(--t2)",fontSize:12,marginBottom:12}}>Check off cats you own. Data persists across sessions.</p>
+    <div className="sb"><input className="inp" placeholder="Search..." value={q} onChange={e=>sQ(e.target.value)}/><button className="btn2" onClick={()=>save({})}>Clear All</button></div>
+    <div style={{maxHeight:"60vh",overflowY:"auto"}}><table><thead><tr><th></th><th>ID</th><th>Name</th><th>Lv</th><th>DPS</th></tr></thead>
+    <tbody>{f.slice(0,200).map(u=>{const o=owned[u.id];return <tr key={u.id} style={{background:o?"#69f0ae08":"transparent"}}>
+      <td><input type="checkbox" checked={!!o} onChange={()=>toggle(u.id)}/></td>
+      <td>{u.id}</td><td className="nm"><RB id={u.id}/>{u.nm}</td>
+      <td>{o?<input type="number" value={o.lv||30} onChange={e=>setLv(u.id,+e.target.value)} style={{width:40,background:"var(--s2)",border:"1px solid var(--bd)",color:"var(--t)",borderRadius:3,textAlign:"center",fontSize:11}}/>:""}</td>
+      <td style={{color:"var(--gold)"}}>{dps(u)}</td>
+    </tr>;})}</tbody></table></div></div>;
+}
+
+function RanksTab(){
+  const [q,sQ]=useState("");
+  const f=q?DB.ranks.filter(r=>String(r[0]).includes(q)):DB.ranks;
+  return <div className="slide-up"><h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>User Rank Rewards ({DB.ranks.length})</h3>
+    <input className="inp" placeholder="Search rank..." value={q} onChange={e=>sQ(e.target.value)} style={{marginBottom:12}}/>
+    <table><thead><tr><th>Rank</th><th>Rewards</th></tr></thead>
+    <tbody>{f.slice(0,80).map((r,i)=><tr key={i}>
+      <td style={{fontWeight:700,color:r[0]>=9999?"var(--pink)":r[0]>=3650?"var(--accent)":r[0]>=1600?"var(--green)":"var(--t)"}}>{r[0].toLocaleString()}</td>
+      <td style={{fontSize:11}}>{r[1]}</td>
+    </tr>)}</tbody></table></div>;
+}
+
+function InfoTab(){
+  return <div className="slide-up">
+    <div className="grid">
+      {[["Units","854","var(--accent)"],["Forms",DB.U.length.toLocaleString(),"var(--cyan)"],["Enemies",DB.E.filter(e=>e.hp>0).length+"","var(--red)"],["Stages",Object.keys(DB.ST).length.toLocaleString(),"var(--green)"],["Names",DB.lookup.length.toLocaleString(),"var(--gold)"],["Combos",DB.combos.length+"","var(--purple)"],["Series",Object.keys(DB.series).length+"","var(--pink)"]].map(([l,n,c],i)=>
+        <div key={i} className="stat-card"><div className="l">{l}</div><div className="v" style={{color:c}}>{n}</div></div>)}
+    </div>
+    <div className="card"><h3 style={{color:"var(--accent)"}}>Battle Cats Explorer</h3>
+      <div style={{fontSize:12,color:"var(--t2)",lineHeight:1.8}}>
+        Decrypted from <b style={{color:"var(--t)"}}>BCEN 15.2.0</b> via BCGM-Python. Parsed with <b style={{color:"var(--t)"}}>BCU exact column mapping</b>.<br/><br/>
+        Stats = Level 1. Formula: actual = base {"\u00D7"} (1 + 1.5 {"\u00D7"} treasure%/300) {"\u00D7"} level_mult. At Lv30 + 300% {"\u2248"} base {"\u00D7"} 8.4<br/><br/>
+        <b style={{color:"var(--accent)"}}>Host:</b> Push to GitHub Pages, Netlify, or any static host. Just index.html + style.css + data/
+      </div></div></div>;
+}
+
+function App(){
+  const [tab,setTab]=useState("ask");
+  const [ready,setReady]=useState(false);
+  useEffect(()=>{loadData().then(d=>{DB=d;setReady(true);}).catch(e=>{document.getElementById("root").innerHTML='<div class="loading" style="color:var(--red)">Failed: '+e.message+'</div>';});},[]);
+  if(!ready)return <div className="loading">Summoning cats...</div>;
+  const R={ask:AskTab,units:UnitsTab,enemies:EnemiesTab,stages:StagesTab,rec:RecTab,compare:CompareTab,
+    calc:CalcTab,rank:RankingsTab,dps:DPSChart,combos:CombosTab,drops:DropsTab,xp:XPTab,fruit:CatfruitTab,
+    wave:WaveTab,tier:TierTab,ehp:EHPTab,tfpri:TFPriTab,seed:SeedTab,mycats:MyCatsTab,ranks:RanksTab,info:InfoTab};
+  const C=R[tab]||InfoTab;
+  return <div>
+    <div className="header">
+      <h1>BATTLE CATS</h1>
+      <span className="badge">v15.2.0 BCEN</span>
+      <span className="badge">{DB.U.length} forms</span>
+      <span className="badge">{DB.E.filter(e=>e.hp>0).length} enemies</span>
+    </div>
+    <div className="tabs">{TABS.map(t=><div key={t.id} className={"tab"+(tab===t.id?" on":"")} onClick={()=>setTab(t.id)}>{t.icon} {t.label}</div>)}</div>
+    <div className="cnt"><C/></div>
+  </div>;
+}
+ReactDOM.render(<App/>,document.getElementById("root"));
+</script>
+</body>
+</html>
