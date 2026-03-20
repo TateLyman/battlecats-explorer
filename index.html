@@ -343,6 +343,144 @@ function ProgressTab(){const [cleared,setCleared]=useState({});useEffect(()=>{tr
 
 function RanksTab(){const [q,sQ]=useState("");const f=q?DB.ranks.filter(r=>String(r[0]).includes(q)):DB.ranks;return <div className="slide-up"><h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Rank Rewards ({DB.ranks.length})</h3><input className="inp" placeholder="Search rank..." value={q} onChange={e=>sQ(e.target.value)} style={{marginBottom:12}}/><table><thead><tr><th>Rank</th><th>Rewards</th></tr></thead><tbody>{f.slice(0,80).map((r,i)=><tr key={i}><td style={{fontWeight:700,color:r[0]>=9999?"var(--pink)":r[0]>=3650?"var(--accent)":"var(--t)"}}>{r[0].toLocaleString()}</td><td style={{fontSize:11}}>{r[1]}</td></tr>)}</tbody></table></div>;}
 
+function TalentTab(){
+  const [q,sQ]=useState(""),[sort,sS]=useState("total");
+  const data=useMemo(()=>{
+    const trees=DB.talentTrees||[];
+    let r=trees.map(t=>{
+      const totalNP=t[2].reduce((s,sl)=>s+sl.np,0);
+      const count=t[2].length;
+      return{id:t[0],nm:t[1],slots:t[2],totalNP,count};
+    });
+    if(q)r=r.filter(t=>t.nm.toLowerCase().includes(q.toLowerCase()));
+    if(sort==="total")r.sort((a,b)=>a.totalNP-b.totalNP);
+    else if(sort==="count")r.sort((a,b)=>b.count-a.count);
+    else r.sort((a,b)=>a.id-b.id);
+    return r;
+  },[q,sort]);
+  const [detail,setDetail]=useState(null);
+  return <div className="slide-up">
+    <h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Talent Planner ({(DB.talentTrees||[]).length} units)</h3>
+    <p style={{color:"var(--t2)",fontSize:12,marginBottom:16}}>Exact NP costs from SkillAcquisition.csv + SkillLevel.csv. Click a unit for full talent breakdown.</p>
+    <div className="sb">
+      <input className="inp" placeholder="Search..." value={q} onChange={e=>sQ(e.target.value)}/>
+      <select className="sel" value={sort} onChange={e=>sS(e.target.value)}><option value="total">Cheapest Total NP</option><option value="count">Most Talents</option><option value="id">ID</option></select>
+    </div>
+    {detail&&<div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"#000a",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}} onClick={()=>setDetail(null)}>
+      <div style={{background:"var(--s1)",border:"1px solid var(--bd)",borderRadius:12,padding:20,maxWidth:550,width:"90%",maxHeight:"80vh",overflowY:"auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:12}}>
+          <h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive"}}>{detail.nm} Talents</h3>
+          <span style={{cursor:"pointer",color:"var(--t3)",fontSize:18}} onClick={()=>setDetail(null)}>{"\u2715"}</span>
+        </div>
+        <div style={{fontSize:12,color:"var(--t2)",marginBottom:12}}>Total NP to max all: <b style={{color:"var(--gold)"}}>{detail.totalNP} NP</b></div>
+        {detail.slots.map((s,i)=><div key={i} className="card" style={{padding:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",marginBottom:4}}>
+            <b style={{color:"var(--t)"}}>{s.desc}</b>
+            <span style={{color:"var(--gold)",fontWeight:700}}>{s.np} NP</span>
+          </div>
+          <div style={{fontSize:11,color:"var(--t2)"}}>Max Lv: {s.maxLv} | Curve: {s.curve}</div>
+          {s.perLv.length>0&&<div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
+            {s.perLv.map((c,j)=><span key={j} style={{padding:"2px 6px",background:"var(--s2)",borderRadius:4,fontSize:10,color:"var(--cyan)"}}>{c}</span>)}
+          </div>}
+        </div>)}
+      </div>
+    </div>}
+    <table><thead><tr>{["ID","Unit","Talents","Total NP","Cheapest","Most Expensive"].map(h=><th key={h}>{h}</th>)}</tr></thead>
+    <tbody>{data.slice(0,100).map((t,i)=><tr key={i} style={{cursor:"pointer"}} onClick={()=>setDetail(t)}>
+      <td>{t.id}</td>
+      <td className="nm"><RB id={t.id}/>{t.nm}</td>
+      <td style={{color:"var(--cyan)"}}>{t.count}</td>
+      <td style={{color:"var(--gold)",fontWeight:700}}>{t.totalNP}</td>
+      <td style={{color:"var(--green)",fontSize:10}}>{t.slots.length>0?t.slots.reduce((m,s)=>Math.min(m,s.np),Infinity)+"NP":""}</td>
+      <td style={{color:"var(--red)",fontSize:10}}>{t.slots.length>0?Math.max(...t.slots.map(s=>s.np))+"NP":""}</td>
+    </tr>)}</tbody></table>
+  </div>;
+}
+
+function OtotoTab(){
+  const cannons=DB.cannons||[];
+  const recipes=DB.baseRecipes||{};
+  const baseNames=DB.baseNames||{};
+  const [tab,setTab]=useState("cannon");
+  return <div className="slide-up">
+    <h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Ototo Base</h3>
+    <p style={{color:"var(--t2)",fontSize:12,marginBottom:16}}>Cannon stats and base upgrade data from CC_AllParts + CastleRecipe game files.</p>
+    <div className="sb">
+      <button className={tab==="cannon"?"btn":"btn2"} onClick={()=>setTab("cannon")}>Cannons ({cannons.length})</button>
+      <button className={tab==="base"?"btn":"btn2"} onClick={()=>setTab("base")}>Base Upgrades ({Object.keys(recipes).length})</button>
+    </div>
+    {tab==="cannon"&&<div className="fade-in">
+      {cannons.map((c,i)=><div key={i} className="card">
+        <h3 style={{color:"var(--cyan)",marginBottom:8,fontSize:14}}>{c.name} Cannon</h3>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          {c.levels.map((l,j)=><div key={j} style={{background:"var(--s2)",borderRadius:6,padding:"8px 12px",textAlign:"center",minWidth:70}}>
+            <div style={{fontSize:9,color:"var(--t3)"}}>Lv {l.lv/10}</div>
+            <div style={{fontSize:14,fontWeight:700,color:"var(--gold)"}}>{l.v1}</div>
+            <div style={{fontSize:9,color:"var(--t3)"}}>{"\u2192"} {l.v2}</div>
+          </div>)}
+        </div>
+      </div>)}
+    </div>}
+    {tab==="base"&&<div className="fade-in">
+      {Object.entries(recipes).map(([rid,levels])=><div key={rid} className="card">
+        <h3 style={{color:"var(--green)",marginBottom:8,fontSize:14}}>{baseNames[rid]||"Category "+rid}</h3>
+        <div style={{overflowX:"auto"}}><table><thead><tr><th>Lv</th><th>Hours</th><th>Materials</th></tr></thead>
+        <tbody>{levels.slice(0,15).map((lv,j)=><tr key={j}>
+          <td style={{color:"var(--cyan)"}}>{j+1}</td>
+          <td style={{color:"var(--gold)"}}>{lv[0]}h</td>
+          <td style={{fontSize:10,color:"var(--t2)"}}>{lv.slice(1).filter(v=>v>0).join(", ")||"Free"}</td>
+        </tr>)}</tbody></table></div>
+      </div>)}
+    </div>}
+  </div>;
+}
+
+function FarmTab(){
+  const [item,setItem]=useState("");
+  const items=useMemo(()=>DB.farmData?Object.keys(DB.farmData).sort():[], []);
+  const sources=useMemo(()=>item&&DB.farmData?DB.farmData[item]||[]:[], [item]);
+  const hidden=DB.hiddenDrops||[];
+  return <div className="slide-up">
+    <h3 style={{color:"var(--accent)",fontFamily:"'Righteous',cursive",marginBottom:12}}>Farm Planner</h3>
+    <p style={{color:"var(--t2)",fontSize:12,marginBottom:16}}>Drop rates extracted directly from BCEN 15.2.0 game files. Every percentage is exact.</p>
+    <div className="sb">
+      <select className="sel" style={{minWidth:220}} value={item} onChange={e=>setItem(e.target.value)}>
+        <option value="">Select item to farm...</option>
+        {items.map(i=><option key={i} value={i}>{i}</option>)}
+      </select>
+    </div>
+    {item&&sources.length>0&&<div className="fade-in">
+      <h3 style={{color:"var(--gold)",fontFamily:"'Righteous',cursive",fontSize:16,marginBottom:12}}>Best sources for {item}</h3>
+      {sources.map((s,i)=><div key={i} className="card" style={{display:"flex",alignItems:"center",gap:12,padding:12}}>
+        <div style={{fontSize:20,fontWeight:800,color:i===0?"var(--accent)":i<3?"var(--gold)":"var(--t3)",fontFamily:"'Righteous',cursive",minWidth:36}}>#{i+1}</div>
+        <div style={{flex:1}}>
+          <div className="nm">{s.src}</div>
+          <div style={{fontSize:10,color:"var(--t3)"}}>{s.type==="catfruit"?"Dedicated Catfruit Stage":"SoL/UL Subchapter"}</div>
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:22,fontWeight:800,fontFamily:"'Righteous',cursive",color:s.rate>=20?"var(--green)":s.rate>=10?"var(--gold)":"var(--t2)"}}>{s.rate}%</div>
+          <div style={{fontSize:9,color:"var(--t3)"}}>drop rate</div>
+        </div>
+      </div>)}
+    </div>}
+    {!item&&<div>
+      <h3 style={{color:"var(--cyan)",fontFamily:"'Righteous',cursive",fontSize:14,marginBottom:12}}>Catfruit Stage Drop Tables (from game files)</h3>
+      {hidden.map((h,i)=><div key={i} className="card">
+        <h3 style={{color:"var(--gold)",marginBottom:8,fontSize:13}}>{h[0]}</h3>
+        <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+          {Object.entries(h[1]).sort((a,b)=>b[1]-a[1]).map(([item,rate],j)=>{
+            const c=item.includes("Fruit")?"var(--accent)":item.includes("Epic")?"var(--gold)":item.includes("Elder")?"var(--pink)":"var(--cyan)";
+            return <div key={j} style={{background:"var(--s2)",borderRadius:6,padding:"6px 10px",textAlign:"center",minWidth:80}}>
+              <div style={{fontSize:14,fontWeight:800,color:c}}>{rate}%</div>
+              <div style={{fontSize:9,color:"var(--t2)"}}>{item}</div>
+            </div>;
+          })}
+        </div>
+      </div>)}
+    </div>}
+  </div>;
+}
+
 function InfoTab(){return <div className="slide-up"><div className="grid">{[["854","Units","var(--accent)"],[DB.U.length.toLocaleString(),"Forms","var(--cyan)"],[DB.E.filter(e=>e.hp>0).length+"","Enemies","var(--red)"],[Object.keys(DB.ST).length.toLocaleString(),"Stages","var(--green)"],[DB.combos.length+"","Combos","var(--purple)"],[Object.keys(DB.series).length+"","Series","var(--pink)"]].map(([n,l,c],i)=><div key={i} className="stat-card"><div className="l">{l}</div><div className="v" style={{color:c}}>{n}</div></div>)}</div><div className="card"><h3 style={{color:"var(--accent)"}}>About</h3><div style={{fontSize:12,color:"var(--t2)",lineHeight:1.8}}>BCEN 15.2.0 via BCGM-Python + BCU column mapping.<br/>Stats = Level 1. At Lv30 + 300% {"\u2248"} base {"\u00D7"} 8.4</div></div></div>;}
 
 const TABS=[
@@ -367,6 +505,9 @@ const TABS=[
   {id:"seed",icon:"\u{1F331}",label:"Seed"},
   {id:"treasure",icon:"\u{1F4CE}",label:"Treasure"},
   {id:"mycats",icon:"\u{1F431}",label:"My Cats"},
+  {id:"farm",icon:"\u{1F33E}",label:"Farm"},
+  {id:"talent",icon:"\u{1F48E}",label:"Talents"},
+  {id:"ototo",icon:"\u{1F3F0}",label:"Ototo"},
   {id:"progress",icon:"\u2705",label:"Progress"},
   {id:"ranks",icon:"\u{1F396}\uFE0F",label:"Ranks"},
   {id:"info",icon:"\u{1F4CA}",label:"Info"},
@@ -383,7 +524,7 @@ function App(){
   if(!ready)return <div className="loading">Summoning cats...</div>;
   const R={search:SearchTab,units:UnitsTab,enemies:EnemiesTab,stages:StagesTab,rec:RecTab,team:TeamTab,compare:CompareTab,
     calc:CalcTab,rank:RankingsTab,dps:DPSChart,combos:CombosTab,drops:DropsTab,xp:XPTab,fruit:CatfruitTab,
-    wave:WaveTab,tier:TierTab,ehp:EHPTab,tfpri:TFPriTab,seed:SeedTab,treasure:TreasureTab,mycats:MyCatsTab,progress:ProgressTab,ranks:RanksTab,info:InfoTab};
+    wave:WaveTab,tier:TierTab,ehp:EHPTab,tfpri:TFPriTab,seed:SeedTab,treasure:TreasureTab,mycats:MyCatsTab,farm:FarmTab,talent:TalentTab,ototo:OtotoTab,progress:ProgressTab,ranks:RanksTab,info:InfoTab};
   const C=R[tab]||InfoTab;
   return <div>
     <div className="header">
